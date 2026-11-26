@@ -1,145 +1,132 @@
 #!/usr/bin/env python3
-"""Entry program for the make.fun bounty ``news-image-20261125``.
+"""Tariff Storm -- World News, 25 November 2026.
 
-"Sum up 25 November's world news in one image."
+Entrypoint for the news-image-20261125 bounty. It takes the bundled
+``front-page.png`` (the finished newspaper front page for 25 November
+2026) and installs it as ``<output-dir>/entry.png``, after proving the
+bundled file is exactly the image this entry was built from.
 
-The entry is a single newspaper-style front page, ``front-page.png``
-(1024x1024), summing up the world news of Wednesday 25 November
-2026. This program copies that bundled image, byte for byte, to
-``/output/entry.png`` — the one file the bounty judges.
+Facts of the bundled image, so a swapped or damaged file is caught:
+  file:   front-page.png
+  size:   144890 bytes
+  sha256: cd633414c234ab6c6bdce297d2d11a9766ca4a30d9f9b2e536229ad65b76f1cb
+  pixels: 1024 x 1024
 
-It runs with no network, no randomness and no clock: the same input
-always produces the same output, so the two grading runs write
-identical bytes.
+Usage:
+  python3 main.py [--check] [output-dir]
 
-Before copying, the program checks the bundled image so a corrupt
-or wrong-sized file can never be submitted silently:
-
-* it must be a real PNG (8-byte signature, IHDR first);
-* it must be exactly 1024x1024 pixels;
-* it must be at most 1 MiB (the bounty limit);
-* after writing, the output is read back and its SHA-256 is
-  compared with the source; any mismatch aborts and removes the
-  partial output.
-
-The front page (``front-page.png``, SHA-256
-``cd633414c234ab6c6bdce297d2d11a9766ca4a30d9f9b2e536229ad65b76f1cb``,
-144,890 bytes) covers stories all first reported on
-25 November 2026: the Trump administration's new tariffs on 14
-economies, China up to 20% (hero); Jerusalem judges urging
-prosecutors to drop the most serious bribery case against Benjamin
-Netanyahu; a fuel tanker explosion on Cairo's ring road killing at
-least 30 people; the Houthis claiming a strike on Saudi Arabia's
-Ras Tanura refinery; China launching Shenzhou-24 with Pakistan's
-Muhammad Zeeshan Ali, the first foreigner aboard Tiangong;
-Bangladesh raising the garment minimum wage 36%; plus an ALSO
-TODAY strip (Poland's planned no-fly zone, RSF drones killing 19
-in Sudan, the US Army detonating 4,400 kg of explosives in Iowa,
-AI stocks tumbling, China probing its Shanghai party chief,
-miners trapped in a flooded Indonesian gold mine).
-
-Usage
------
-    python3 main.py                # writes /output/entry.png
-    python3 main.py /tmp/out       # writes /tmp/out/entry.png (testing)
-    python3 main.py --check        # validate only, write nothing
-
-Exit code 0 means the image was written and verified (or, with
---check, that it passed validation). Anything else means validation
-failed.
-
-Only the Python standard library is used.
+  --check     only validate the bundled image, write nothing.
+  output-dir  directory receiving entry.png (default: /output).
 """
 
-from __future__ import annotations
-
 import hashlib
+import os
 import struct
 import sys
-from pathlib import Path
 
-SOURCE = "front-page.png"
-OUT_NAME = "entry.png"
-DEFAULT_OUT = Path("/output")
-
-WANT_W, WANT_H = 1024, 1024
-MAX_SIZE = 1024 * 1024  # 1 MiB
-
-SIGNATURE = b"\x89PNG\r\n\x1a\n"
+EXPECTED_SHA256 = "cd633414c234ab6c6bdce297d2d11a9766ca4a30d9f9b2e536229ad65b76f1cb"
+EXPECTED_BYTES = 144890
+EXPECTED_WIDTH = 1024
+EXPECTED_HEIGHT = 1024
+MAX_BYTES = 1024 * 1024
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+IMAGE_NAME = "front-page.png"
 
 
-def digest(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
+def fail(message):
+    """Print an error and stop with a non-zero exit code."""
+    print("main.py: error: %s" % message, file=sys.stderr)
+    raise SystemExit(1)
 
 
-def dimensions(data: bytes) -> tuple[int, int]:
-    """Read (width, height) from a PNG byte string's IHDR chunk."""
-    if len(data) < 33 or data[:8] != SIGNATURE:
-        raise ValueError("not a PNG file: bad signature or too short")
-    size, kind = struct.unpack(">I4s", data[8:16])
-    if kind != b"IHDR" or size != 13:
-        raise ValueError("not a PNG file: first chunk is not IHDR")
-    return struct.unpack(">II", data[16:24])
+def bundled_path():
+    """Absolute path of the image shipped next to this script."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(here, IMAGE_NAME)
 
 
-def load(repo: Path) -> bytes:
-    path = repo / SOURCE
-    if not path.is_file():
-        raise FileNotFoundError(f"bundled image {SOURCE!r} missing")
-    data = path.read_bytes()
-    if len(data) > MAX_SIZE:
-        raise ValueError(f"image is {len(data)} bytes, over the 1 MiB limit")
-    w, h = dimensions(data)
-    if (w, h) != (WANT_W, WANT_H):
-        raise ValueError(f"image is {w}x{h}, expected {WANT_W}x{WANT_H}")
-    return data
+def read_bundled():
+    """Read the bundled image, or stop if it is missing."""
+    path = bundled_path()
+    if not os.path.isfile(path):
+        fail("bundled image not found: %s" % path)
+    with open(path, "rb") as handle:
+        return handle.read()
 
 
-def emit(data: bytes, dest: Path) -> None:
-    """Write *data* to *dest* and verify the round trip byte for byte."""
-    want = digest(data)
-    try:
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(data)
-        back = dest.read_bytes()
-    except OSError as exc:
-        print(f"error: cannot write {dest}: {exc}", file=sys.stderr)
-        raise SystemExit(1)
-    if back != data or digest(back) != want:
-        try:
-            dest.unlink()
-        except OSError:
-            pass
-        print("error: output differs from source after write",
-              file=sys.stderr)
-        raise SystemExit(1)
-    print(f"wrote:  {dest} ({len(back)} bytes, verified)")
+def check_png(data):
+    """Validate the PNG bytes; stop with a clear reason on any mismatch."""
+    if len(data) > MAX_BYTES:
+        fail("image is %d bytes, over the 1 MiB limit" % len(data))
+    if len(data) != EXPECTED_BYTES:
+        fail("image is %d bytes, expected %d" % (len(data), EXPECTED_BYTES))
+    if data[:8] != PNG_MAGIC:
+        fail("bad PNG signature, not a PNG file")
+    if len(data) < 33:
+        fail("image too short to hold an IHDR chunk")
+    if data[12:16] != b"IHDR":
+        fail("first chunk is not IHDR")
+    width, height = struct.unpack(">II", data[16:24])
+    if (width, height) != (EXPECTED_WIDTH, EXPECTED_HEIGHT):
+        fail("image is %dx%d, expected %dx%d"
+             % (width, height, EXPECTED_WIDTH, EXPECTED_HEIGHT))
+    digest = hashlib.sha256(data).hexdigest()
+    if digest != EXPECTED_SHA256:
+        fail("sha256 mismatch: got %s" % digest)
+    return width, height, digest
 
 
-def run(argv: list[str]) -> int:
-    check_only = bool(argv) and argv[0] == "--check"
-    args = argv[1:] if check_only else argv
-    if len(args) > 1:
-        print("usage: python3 main.py [--check] [output-dir]",
-              file=sys.stderr)
-        return 2
-    out_dir = Path(args[0]) if args else DEFAULT_OUT
-    repo = Path(__file__).resolve().parent
-    try:
-        data = load(repo)
-    except (FileNotFoundError, ValueError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-    w, h = dimensions(data)
-    print(f"validated: {SOURCE} is {w}x{h} PNG, {len(data)} bytes "
-          f"(<= 1 MiB)")
-    print(f"sha256: {digest(data)}")
+def write_entry(data, outdir, digest):
+    """Write the image byte-for-byte and verify the written copy.
+
+    ``digest`` is the sha256 check_png already computed for the source
+    bytes, so the source is not hashed a second time here.
+    """
+    os.makedirs(outdir, exist_ok=True)
+    target = os.path.join(outdir, "entry.png")
+    with open(target, "wb") as handle:
+        handle.write(data)
+    with open(target, "rb") as handle:
+        written = handle.read()
+    if hashlib.sha256(written).hexdigest() != digest:
+        fail("written file failed its sha256 round-trip check")
+    return target
+
+
+def usage_error():
+    print(__doc__, file=sys.stderr)
+    print("main.py: usage: python3 main.py [--check] [output-dir]",
+          file=sys.stderr)
+    raise SystemExit(2)
+
+
+def main(argv):
+    check_only = False
+    outdir = "/output"
+    rest = []
+    for arg in argv[1:]:
+        if arg == "--check":
+            check_only = True
+        elif arg.startswith("-"):
+            usage_error()
+        else:
+            rest.append(arg)
+    if len(rest) > 1:
+        usage_error()
+    if rest:
+        outdir = rest[0]
+
+    data = read_bundled()
+    width, height, digest = check_png(data)
     if check_only:
-        print("check only: nothing written")
+        print("check ok: %s, %dx%d, %d bytes, sha256 %s"
+              % (IMAGE_NAME, width, height, len(data), digest))
         return 0
-    emit(data, out_dir / OUT_NAME)
+    target = write_entry(data, outdir, digest)
+    print("wrote %s (%dx%d, %d bytes, sha256 %s)"
+          % (target, width, height, len(data), digest))
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(run(sys.argv[1:]))
+    raise SystemExit(main(sys.argv))
